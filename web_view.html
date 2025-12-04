@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Whisper Transcribe</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        /* Custom scrollbar for a more modern look (optional) */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #2a2a2a; /* Slightly lighter dark for track */
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #555; /* Darker gray for thumb */
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3498db; /* Accent color on hover */
+        }
+
+        /* Custom styles for Inter font if Tailwind's default sans isn't exactly Inter */
+        body {
+            font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+        }
+
+        /* Placeholder for OS-like window controls - actual implementation depends on Electron's frameless window setup */
+        .window-controls .control-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-left: 8px;
+        }
+        .window-controls .close-dot { background-color: #FF5F57; }
+        .window-controls .minimize-dot { background-color: #FFBD2E; }
+        .window-controls .maximize-dot { background-color: #27C93F; }
+
+        /* Ensure the app takes up a good portion of the view, simulating a desktop app window */
+        html, body {
+            height: 100%;
+            margin: 0;
+            background-color: #121212; /* A very dark background for the page, app itself is #1E1E1E */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .app-container {
+            width: 95vw; /* Responsive width, slightly increased for sidebar */
+            max-width: 1000px; /* Max width for larger screens, increased for sidebar */
+            height: 90vh; /* Responsive height */
+            max-height: 750px; /* Max height */
+        }
+
+        /* Active sidebar link style */
+        .sidebar-link-active {
+            background-color: #3498DB; /* Accent color */
+            color: white;
+        }
+        .sidebar-link-active i {
+            color: white !important; /* Ensure icon color changes too */
+        }
+    </style>
+</head>
+<body class="bg-[#1E1E1E] text-gray-200 flex items-center justify-center min-h-screen p-4">
+
+    <div class="app-container bg-[#1E1E1E] shadow-2xl rounded-lg flex flex-row overflow-hidden">
+
+        <aside id="sidebar" class="w-60 bg-[#2A2A2A] p-5 space-y-6 text-gray-300 flex flex-col select-none border-r border-gray-700">
+            <div class="text-left py-2 mb-2">
+                <h2 class="text-2xl font-semibold text-white">Whisper<span class="text-blue-500">.</span></h2>
+                <p class="text-xs text-gray-500">Local Transcription</p>
+            </div>
+            <nav class="flex-grow space-y-2">
+                <a href="#active" id="nav-active" class="sidebar-link flex items-center py-2.5 px-4 rounded-lg hover:bg-gray-700 transition-colors duration-200 sidebar-link-active">
+                    <i class="fas fa-microphone-alt w-5 h-5 mr-3 text-gray-400"></i> Active Transcription
+                </a>
+                <a href="#previous" id="nav-previous" class="sidebar-link flex items-center py-2.5 px-4 rounded-lg hover:bg-gray-700 transition-colors duration-200">
+                    <i class="fas fa-history w-5 h-5 mr-3 text-gray-400"></i> Previous
+                </a>
+                <a href="#account" id="nav-account" class="sidebar-link flex items-center py-2.5 px-4 rounded-lg hover:bg-gray-700 transition-colors duration-200">
+                    <i class="fas fa-user-circle w-5 h-5 mr-3 text-gray-400"></i> Account
+                </a>
+                <a href="#settings" id="nav-settings" class="sidebar-link flex items-center py-2.5 px-4 rounded-lg hover:bg-gray-700 transition-colors duration-200">
+                    <i class="fas fa-cog w-5 h-5 mr-3 text-gray-400"></i> Settings
+                </a>
+            </nav>
+            <div class="mt-auto border-t border-gray-700 pt-4">
+                <p class="text-xs text-gray-500 text-center">&copy; 2024 Local Whisper</p>
+            </div>
+        </aside>
+
+        <div class="flex-grow flex flex-col overflow-hidden">
+            <header class="bg-[#252525] p-3 flex items-center justify-between draggable-area select-none border-b border-gray-700">
+                <div class="flex items-center">
+                    <h1 id="current-view-title" class="text-xl font-semibold text-white">Active Transcription</h1>
+                </div>
+            </header>
+
+            <main class="flex-grow p-6 space-y-6 overflow-y-auto bg-[#1E1E1E]">
+
+                <div id="view-active" class="view-content space-y-6">
+                    <section id="input-controls">
+                        <div id="drag-drop-area" class="border-2 border-dashed border-gray-600 hover:border-blue-500 transition-colors rounded-lg p-8 text-center cursor-pointer bg-[#2A2A2A]">
+                            <i class="fas fa-upload text-4xl text-gray-500 mb-3"></i>
+                            <p class="text-gray-400">Drag & Drop Audio File Here</p>
+                            <p class="text-sm text-gray-500">(Click to select or Drag & Drop)</p>
+                        </div>
+                        <p id="selected-file-display" class="text-xs text-gray-500 mt-3 text-center">No file selected.</p>
+                        <button id="start-transcription-button" class="w-full mt-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+                            Start Transcription
+                        </button>
+                    </section>
+
+                    <section id="status-progress" class="space-y-2">
+                        <p id="status-text" class="text-sm text-gray-400 text-center">Ready</p>
+                        <div class="w-full bg-gray-700 rounded-full h-2.5">
+                            <div id="progress-bar" class="bg-blue-500 h-2.5 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                        </div>
+                    </section>
+
+                    <section id="output-area" class="flex-grow flex flex-col">
+                        <label for="transcription-output" class="text-sm font-medium text-gray-300 mb-1">Transcription:</label>
+                        <div id="transcription-output-container" class="flex-grow bg-[#2A2A2A] rounded-lg p-4 border border-gray-700 min-h-[150px]">
+                            <textarea id="transcription-output" class="w-full h-80 bg-[#2A2A2A] p-3 rounded-md text-sm text-gray-300 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500" placeholder="Transcription will appear here..." readonly></textarea>
+                        </div>
+                        <div class="mt-4 flex space-x-3 justify-end">
+                            <button id="copy-text-button" class="bg-gray-600 hover:bg-gray-700 text-gray-200 py-2 px-4 rounded-lg text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50">
+                                <i class="far fa-copy mr-2"></i>Copy Text
+                            </button>
+                            <button id="save-as-button" class="bg-gray-600 hover:bg-gray-700 text-gray-200 py-2 px-4 rounded-lg text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50">
+                                <i class="far fa-save mr-2"></i>Save As...
+                            </button>
+                        </div>
+                    </section>
+                </div>
+
+                <div id="view-previous" class="view-content hidden">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold text-white">Previous Transcriptions</h2>
+                        <button id="refresh-transcriptions" class="bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded-lg text-sm transition-colors">
+                            <i class="fas fa-sync-alt mr-2"></i>Refresh
+                        </button>
+                    </div>
+
+                    <div id="transcriptions-loading" class="text-center text-gray-400 py-8">
+                        <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                        <p>Loading transcriptions...</p>
+                    </div>
+
+                    <div id="transcriptions-empty" class="text-center text-gray-400 py-8 hidden">
+                        <i class="fas fa-history text-4xl mb-2"></i>
+                        <p>No transcriptions found.</p>
+                        <p class="text-sm">Complete some transcriptions to see them here.</p>
+                    </div>
+
+                    <div id="transcriptions-list" class="space-y-4 hidden">
+                        <!-- Transcription items will be dynamically added here -->
+                    </div>
+                </div>
+
+                <div id="view-account" class="view-content hidden">
+                    <h2 class="text-xl font-semibold text-white mb-4">Account Management</h2>
+                    <p class="text-gray-400">Manage your account details here. (Functionality to be implemented)</p>
+                     <div class="bg-[#2A2A2A] p-4 rounded-lg mt-2 space-y-3">
+                        <div>
+                            <label for="username" class="block text-sm font-medium text-gray-300">Username</label>
+                            <input type="text" id="username" value="CurrentUser" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm text-white" disabled>
+                        </div>
+                        <div>
+                            <label for="email" class="block text-sm font-medium text-gray-300">Email</label>
+                            <input type="email" id="email" value="user@example.com" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm text-white" disabled>
+                        </div>
+                        <button class="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg text-sm">Edit Profile (Not Implemented)</button>
+                    </div>
+                </div>
+
+                <div id="view-settings" class="view-content hidden">
+                    <h2 class="text-xl font-semibold text-white mb-4">Settings</h2>
+                    <p class="text-gray-400">Configure application settings. (Functionality to be implemented)</p>
+                    <div class="bg-[#2A2A2A] p-4 rounded-lg mt-2 space-y-4">
+                        <div>
+                            <label class="flex items-center">
+                                <input type="checkbox" class="form-checkbox h-5 w-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
+                                <span class="ml-2 text-gray-300">Enable Dark Mode (Always On)</span>
+                            </label>
+                        </div>
+                         <div>
+                            <label for="transcription-language" class="block text-sm font-medium text-gray-300">Default Transcription Language</label>
+                            <select id="transcription-language" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm text-white">
+                                <option>English (US)</option>
+                                <option>Spanish</option>
+                                <option>French</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+
+        <div id="message-modal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 hidden z-50">
+            <div class="bg-[#2A2A2A] p-6 rounded-lg shadow-xl max-w-sm w-full border border-gray-700">
+                <h3 id="modal-title" class="text-lg font-semibold text-white mb-2">Message</h3>
+                <p id="modal-message" class="text-gray-300 mb-4 text-sm"></p>
+                <button id="modal-close-button" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.log_js_message) {
+            window.pywebview.api.log_js_message("JavaScript: Main script loaded and log_js_message is available.");
+        } else {
+            // Fallback if pywebview is not ready or API is not there yet for the first log
+            console.log("JavaScript: Main script loaded, pywebview.api.log_js_message not immediately available.");
+        }
+
+        window.addEventListener('pywebviewready', () => {
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.log_js_message) {
+                window.pywebview.api.log_js_message('JavaScript: pywebviewready event fired.');
+                window.pywebview.api.log_js_message('JavaScript: window.pywebview object: ' + JSON.stringify(Object.keys(window.pywebview || {})));
+                if (window.pywebview.file_drop_event) {
+                    window.pywebview.api.log_js_message('JavaScript: file_drop_event found on window.pywebview.');
+                    window.pywebview.file_drop_event.connect(function(paths) {
+                        window.pywebview.api.log_js_message('JavaScript: file_drop_event received paths: ' + JSON.stringify(paths));
+                        if (paths && paths.length > 0) {
+                            handleFileSelect(paths[0]);
+                        }
+                    });
+                } else {
+                    window.pywebview.api.log_js_message('JavaScript ERROR: file_drop_event NOT found on window.pywebview.');
+                }
+            } else {
+                 // Fallback if pywebview is not ready or API is not there yet for pywebviewready logs
+                console.log("JavaScript: pywebviewready event fired, but log_js_message not available.");
+            }
+        });
+
+        // DOM Elements (existing)
+        const dragDropArea = document.getElementById('drag-drop-area');
+
+        const selectedFileDisplay = document.getElementById('selected-file-display');
+        const startTranscriptionButton = document.getElementById('start-transcription-button');
+        const statusText = document.getElementById('status-text');
+        const progressBar = document.getElementById('progress-bar');
+        const transcriptionOutput = document.getElementById('transcription-output');
+        const copyTextButton = document.getElementById('copy-text-button');
+        const saveAsButton = document.getElementById('save-as-button');
+
+        // Modal elements (existing)
+        const messageModal = document.getElementById('message-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalCloseButton = document.getElementById('modal-close-button');
+
+        let currentFile = null;
+
+        // --- Navigation Elements ---
+        const sidebarLinks = document.querySelectorAll('.sidebar-link');
+        const views = document.querySelectorAll('.view-content');
+        const currentViewTitle = document.getElementById('current-view-title');
+
+        // --- Utility to show messages (existing) ---
+        function showModal(title, message) {
+            modalTitle.textContent = title;
+            modalMessage.textContent = message;
+            messageModal.classList.remove('hidden');
+        }
+
+        modalCloseButton.addEventListener('click', () => {
+            messageModal.classList.add('hidden');
+        });
+
+
+        // --- File Handling (existing, ensure elements are available if view is hidden) ---
+        function handleFileSelect(fileOrPath) {
+                let fileName;
+            let isValid = false;
+            let isPathString = typeof fileOrPath === 'string';
+
+            if (isPathString && fileOrPath) { // Path from Python
+                fileName = fileOrPath.split(/[\\/]/).pop(); // Get filename from path
+                const audioExtensions = ['.wav', '.mp3', '.m4a', '.aac', '.ogg', '.flac', '.aif', '.aiff', '.wma', '.opus', '.wv', '.ape', '.mpc', '.amr', '.au', '.gsm', '.mka'];
+                if (audioExtensions.some(ext => fileName.toLowerCase().endsWith(ext))) {
+                    isValid = true;
+                    currentFile = fileOrPath; // Store the path
+                }
+            } else if (fileOrPath instanceof File) { // File object from drag-drop or original input
+                fileName = fileOrPath.name;
+                if (fileOrPath.type.startsWith('audio/')) {
+                    isValid = true;
+                    currentFile = fileOrPath; // Store the File object
+                }
+            }
+
+            if (isValid) {
+                // currentFile is already set correctly above based on type
+                // So this line 'currentFile = fileOrPath;' or 'currentFile = file;' is redundant if currentFile was set correctly in the if/else if blocks.
+                // Let's ensure currentFile holds the validated item.
+                // The 'currentFile = fileOrPath' or 'currentFile = fileObject' was done inside the respective 'if (isPathString)' or 'else if (fileOrPath instanceof File)' blocks.
+                // So, this specific assignment here can be removed or confirmed. For clarity, let's assume it was correctly set.
+                // No change needed here if the logic above is: currentFile = fileOrPath (for path) or currentFile = fileOrPath (for File object)
+                if (selectedFileDisplay) selectedFileDisplay.textContent = `Current File: ${fileName}`;
+                if (startTranscriptionButton) startTranscriptionButton.disabled = false;
+                if (statusText) statusText.textContent = 'Ready to transcribe.';
+                if (progressBar) progressBar.style.width = '0%';
+                if (transcriptionOutput) transcriptionOutput.value = ''; // Clear previous transcription
+            } else {
+                currentFile = null;
+                if (selectedFileDisplay) selectedFileDisplay.textContent = isPathString && !fileOrPath ? 'No file selected.' : 'Invalid file type. Please select an audio file.';
+                if (startTranscriptionButton) startTranscriptionButton.disabled = true;
+                showModal('Invalid File', 'Please select a supported audio file type.');
+            }
+        }
+
+        if (dragDropArea) {
+            dragDropArea.addEventListener('click', async () => {
+                try {
+                    const filePath = await window.pywebview.api.open_file_dialog();
+                    if (filePath) {
+                        handleFileSelect(filePath);
+                    } else {
+                        console.log("HTML: File dialog cancelled or no file selected.");
+                        handleFileSelect(null);
+                    }
+                } catch (error) {
+                    console.error("HTML: Error calling open_file_dialog:", error);
+                    showModal("Dialog Error", "Could not open file dialog: " + (error.message || error));
+                    handleFileSelect(null);
+                }
+            });
+        }
+        
+        if (dragDropArea) {
+            dragDropArea.addEventListener('dragover', (event) => {
+                event.preventDefault(); 
+                dragDropArea.classList.add('border-blue-500', 'bg-[#333333]');
+                dragDropArea.classList.remove('border-gray-600', 'bg-[#2A2A2A]');
+            });
+
+            dragDropArea.addEventListener('dragleave', () => {
+                dragDropArea.classList.remove('border-blue-500', 'bg-[#333333]');
+                dragDropArea.classList.add('border-gray-600', 'bg-[#2A2A2A]');
+            });
+
+            dragDropArea.addEventListener('drop', (event) => {
+                event.preventDefault(); // Prevent browser from opening the file
+                dragDropArea.classList.remove('border-blue-500', 'bg-[#333333]');
+                dragDropArea.classList.add('border-gray-600', 'bg-[#2A2A2A]');
+                // File path will be handled by window.pywebview.file_drop_event
+            });
+        }
+
+        // --- Transcription Logic ---
+        if (startTranscriptionButton) {
+            startTranscriptionButton.addEventListener('click', async () => {
+                                // currentFile can be a File object (drag & drop) or a file path string (Python dialog)
+                if (!currentFile) {
+                    showModal('No File', 'Please select an audio file first.');
+                    return;
+                }
+
+                startTranscriptionButton.disabled = true;
+                statusText.textContent = 'Preparing... (Step 1/2)';
+                progressBar.style.width = '0%';
+                transcriptionOutput.value = ''; 
+
+                try {
+                    let filePathToProcess;
+                    if (typeof currentFile === 'string') {
+                        filePathToProcess = currentFile;
+                    } else if (currentFile instanceof File) {
+                        // For File objects (from drag-drop), pywebview's JS API can't directly accept them.
+                        // We'd ideally need to save it to a temp path first or have Python API handle raw data if possible.
+                        // For now, let's show an error if it's a File object, prompting to use browse.
+                        // A more advanced solution would be to read the file in JS, send bytes to Python, or have Python API request it.
+                        showModal('Unsupported', 'Drag and drop is not yet fully supported for transcription with the Python backend. Please use the Browse button.');
+                        startTranscriptionButton.disabled = false; // Re-enable
+                        return;
+                        // Alternative (if Python API could handle it, or if we save temp file via JS->Python call):
+                        // filePathToProcess = currentFile.name; // This is NOT the full path, just name.
+                    }
+
+                    if (!filePathToProcess) {
+                        showModal('File Error', 'Could not determine the file path to process.');
+                        startTranscriptionButton.disabled = false;
+                        return;
+                    }
+
+                    // Call Python API
+                    const transcription = await window.pywebview.api.start_transcription(filePathToProcess);
+
+                    if (transcription !== null && transcription !== undefined) {
+                        transcriptionOutput.value = transcription;
+                        statusText.textContent = 'Transcription Complete!';
+                        progressBar.style.width = '100%';
+                        showModal('Success', 'Transcription finished successfully!');
+                    } else {
+                        // Error message would have been shown by transcriptionError or if transcription is null
+                        // If transcription is null and no error was explicitly set by transcriptionError, set a generic one.
+                        if (!transcriptionOutput.value.startsWith("Error:")) { // Avoid overwriting specific error
+                           statusText.textContent = 'Transcription failed. Check console or Python logs.';
+                        }
+                    }
+                } catch (error) {
+                    console.error("HTML: Error calling start_transcription:", error);
+                    transcriptionError("Frontend Error: Could not start transcription. " + (error.message || error));
+                }
+                startTranscriptionButton.disabled = false; // Re-enable button
+            });
+        }
+        
+
+        // Remove simulateTranscription and its call, as we are now using the Python backend.
+        /*
+        function simulateTranscription() {
+            let progress = 0;
+            const mockTranscription = [
+                { timestamp: "00:00:01.234", speaker: "Speaker 1", text: "Hello, this is a test of the local Whisper transcription application." },
+                { timestamp: "00:00:05.678", speaker: "Speaker 2", text: "It seems to be working quite well, generating text output." },
+                { timestamp: "00:00:09.012", speaker: "Speaker 1", text: "Yes, the interface is clean and the progress is clearly visible." },
+                { timestamp: "00:00:13.456", speaker: "Speaker 2", text: "Timestamps and speaker labels would be very helpful for longer audio files." },
+                { timestamp: "00:00:18.890", speaker: "Speaker 1", text: "Indeed. This is a good demonstration." }
+            ];
+            let currentText = "";
+
+            const step2Interval = setInterval(() => {
+                progress += 5; 
+                if(progressBar) progressBar.style.width = `${progress}%`;
+                if(statusText) statusText.textContent = `Transcribing (Step 2/2)... ${progress}%`;
+
+                if (mockTranscription.length > 0 && progress % 20 === 0) { 
+                    const segment = mockTranscription.shift();
+                    if (segment) {
+                         currentText += `[${segment.timestamp}] ${segment.speaker}: ${segment.text}\n\n`;
+                         if(transcriptionOutput) {
+                            transcriptionOutput.value = currentText;
+                            transcriptionOutput.scrollTop = transcriptionOutput.scrollHeight; 
+                         }
+                    }
+                }
+
+                if (progress >= 100) {
+                    clearInterval(step2Interval);
+                    while(mockTranscription.length > 0) {
+                        const segment = mockTranscription.shift();
+                        if (segment) {
+                             currentText += `[${segment.timestamp}] ${segment.speaker}: ${segment.text}\n\n`;
+                        }
+                    }
+                    if(transcriptionOutput) {
+                        transcriptionOutput.value = currentText.trim();
+                        transcriptionOutput.scrollTop = transcriptionOutput.scrollHeight;
+                    }
+                    if(statusText) statusText.textContent = 'Transcription Complete!';
+                    if(progressBar) progressBar.style.width = '100%';
+                    showModal('Success', 'Transcription finished successfully!');
+                }
+            }, 300);
+        }
+        */
+
+        // --- JS functions for Python to call ---
+        function updateTranscriptionProgress(message, progressPercentage, stepDetails) {
+            if (statusText) statusText.textContent = stepDetails ? `${stepDetails}: ${message}` : message;
+            if (progressBar) progressBar.style.width = `${progressPercentage}%`;
+        }
+
+        function transcriptionError(errorMessage) {
+            if (statusText) statusText.textContent = 'Error!';
+            if (progressBar) progressBar.style.width = '0%'; // Or indicate error on progress bar
+            if (transcriptionOutput) transcriptionOutput.value = `Error: ${errorMessage}`;
+            showModal('Transcription Error', errorMessage);
+            if (startTranscriptionButton) startTranscriptionButton.disabled = false; // Re-enable
+        }
+
+        // --- Output Actions (existing) ---
+        if (copyTextButton) {
+            copyTextButton.addEventListener('click', () => {
+                if (transcriptionOutput && transcriptionOutput.value) {
+                    navigator.clipboard.writeText(transcriptionOutput.value)
+                        .then(() => {
+                            showModal('Copied', 'Transcription copied to clipboard!');
+                        })
+                        .catch(err => {
+                            console.error('Failed to copy text: ', err);
+                            try {
+                                transcriptionOutput.select(); 
+                                document.execCommand('copy'); 
+                                showModal('Copied', 'Transcription copied to clipboard (legacy method)!');
+                            } catch (execCommandErr) {
+                                console.error('Legacy copy failed: ', execCommandErr);
+                                showModal('Error', 'Could not copy text. Please copy manually.');
+                            }
+                        });
+                } else {
+                    showModal('Nothing to Copy', 'There is no transcription text to copy.');
+                }
+            });
+        }
+
+        if (saveAsButton) {
+            saveAsButton.addEventListener('click', () => {
+                if (transcriptionOutput && transcriptionOutput.value) {
+                    console.log("Simulating save action. In Electron, use main process for dialog.");
+                    showModal('Save As', 'In a real app, this would open a save dialog. For now, check the console.');
+                } else {
+                    showModal('Nothing to Save', 'There is no transcription text to save.');
+                }
+            });
+        }
+        
+
+        // --- View Switching Logic ---
+        sidebarLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                
+                // Remove active class from all links
+                sidebarLinks.forEach(l => l.classList.remove('sidebar-link-active'));
+                // Add active class to clicked link
+                link.classList.add('sidebar-link-active');
+
+                const targetViewId = link.getAttribute('href').substring(1); // Get 'active', 'previous', etc.
+                
+                views.forEach(view => {
+                    if (view.id === `view-${targetViewId}`) {
+                        view.classList.remove('hidden');
+                    } else {
+                        view.classList.add('hidden');
+                    }
+                });
+
+                // Update header title
+                const linkText = link.textContent.trim();
+                if (currentViewTitle) currentViewTitle.textContent = linkText;
+
+                // Reset transcription state if navigating away from 'Active Transcription'
+                if (targetViewId !== 'active' && currentFile) {
+                    // Optionally reset or preserve state. For now, just visual switch.
+                } else if (targetViewId === 'active') {
+                    // If coming back to active, ensure elements are correctly initialized if needed
+                    if (startTranscriptionButton) startTranscriptionButton.disabled = !currentFile;
+                }
+            });
+        });
+
+        // Initial state
+        if (startTranscriptionButton) startTranscriptionButton.disabled = true;
+        // Set default view (Active Transcription)
+        document.getElementById('nav-active')?.classList.add('sidebar-link-active');
+        document.getElementById('view-active')?.classList.remove('hidden');
+        if(currentViewTitle) currentViewTitle.textContent = "Active Transcription";
+
+
+        // --- Previous Transcriptions Functionality ---
+        const transcriptionsLoading = document.getElementById('transcriptions-loading');
+        const transcriptionsEmpty = document.getElementById('transcriptions-empty');
+        const transcriptionsList = document.getElementById('transcriptions-list');
+        const refreshButton = document.getElementById('refresh-transcriptions');
+
+        let currentTranscriptions = [];
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function formatDateTime(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString() + ' - ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        function createTranscriptionElement(transcription) {
+            const transcriptionDiv = document.createElement('div');
+            transcriptionDiv.className = 'bg-[#2A2A2A] rounded-lg p-4 border border-gray-700';
+            transcriptionDiv.innerHTML = `
+                <div class="flex justify-between items-start mb-2">
+                    <div class="flex-grow">
+                        <h3 class="text-white font-medium truncate" title="${transcription.file_name}">${transcription.file_name}</h3>
+                        <p class="text-xs text-gray-500">${formatDateTime(transcription.timestamp)} • ${formatFileSize(transcription.file_size)}</p>
+                    </div>
+                    <div class="flex space-x-2 ml-4">
+                        <button class="view-transcription-btn bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded text-xs transition-colors"
+                                data-id="${transcription.id}">
+                            <i class="fas fa-eye mr-1"></i>View
+                        </button>
+                        <button class="delete-transcription-btn bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded text-xs transition-colors"
+                                data-id="${transcription.id}">
+                            <i class="fas fa-trash mr-1"></i>Delete
+                        </button>
+                    </div>
+                </div>
+                <div class="transcription-preview text-sm text-gray-300 line-clamp-3">
+                    ${transcription.transcription.substring(0, 200)}${transcription.transcription.length > 200 ? '...' : ''}
+                </div>
+            `;
+            return transcriptionDiv;
+        }
+
+        async function loadTranscriptions() {
+            try {
+                transcriptionsLoading.classList.remove('hidden');
+                transcriptionsEmpty.classList.add('hidden');
+                transcriptionsList.classList.add('hidden');
+
+                const transcriptions = await window.pywebview.api.get_transcriptions();
+
+                transcriptionsLoading.classList.add('hidden');
+
+                if (transcriptions && transcriptions.length > 0) {
+                    currentTranscriptions = transcriptions;
+                    transcriptionsList.innerHTML = '';
+                    transcriptions.forEach(transcription => {
+                        transcriptionsList.appendChild(createTranscriptionElement(transcription));
+                    });
+                    transcriptionsList.classList.remove('hidden');
+                } else {
+                    transcriptionsEmpty.classList.remove('hidden');
+                }
+            } catch (error) {
+                console.error('Error loading transcriptions:', error);
+                transcriptionsLoading.classList.add('hidden');
+                showModal('Error', 'Failed to load transcriptions: ' + (error.message || error));
+            }
+        }
+
+        function showTranscriptionModal(transcription) {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50';
+            modal.innerHTML = `
+                <div class="bg-[#2A2A2A] p-6 rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] border border-gray-700">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-white">${transcription.file_name}</h3>
+                        <button class="close-transcription-modal text-gray-400 hover:text-white text-xl">&times;</button>
+                    </div>
+                    <div class="text-xs text-gray-500 mb-4">${formatDateTime(transcription.timestamp)} • ${formatFileSize(transcription.file_size)}</div>
+                    <div class="bg-[#1E1E1E] p-4 rounded-lg border border-gray-600 max-h-96 overflow-y-auto">
+                        <pre class="text-sm text-gray-300 whitespace-pre-wrap">${transcription.transcription}</pre>
+                    </div>
+                    <div class="flex justify-end space-x-3 mt-4">
+                        <button class="copy-transcription-full bg-gray-600 hover:bg-gray-700 text-gray-200 py-2 px-4 rounded-lg text-sm transition-colors">
+                            <i class="far fa-copy mr-2"></i>Copy Text
+                        </button>
+                        <button class="close-transcription-modal bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg text-sm transition-colors">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+            // Copy functionality
+            const copyBtn = modal.querySelector('.copy-transcription-full');
+            copyBtn.addEventListener('click', () => {
+                navigator.clipboard.writeText(transcription.transcription)
+                    .then(() => showModal('Copied', 'Transcription copied to clipboard!'))
+                    .catch(() => showModal('Error', 'Failed to copy text'));
+            });
+
+            // Close functionality
+            const closeBtns = modal.querySelectorAll('.close-transcription-modal');
+            closeBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.body.removeChild(modal);
+                });
+            });
+
+            // Close on background click
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    document.body.removeChild(modal);
+                }
+            });
+        }
+
+        async function deleteTranscription(transcriptionId) {
+            if (!confirm('Are you sure you want to delete this transcription? This action cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const success = await window.pywebview.api.delete_transcription(transcriptionId);
+                if (success) {
+                    showModal('Deleted', 'Transcription deleted successfully.');
+                    await loadTranscriptions(); // Refresh the list
+                } else {
+                    showModal('Error', 'Failed to delete transcription.');
+                }
+            } catch (error) {
+                console.error('Error deleting transcription:', error);
+                showModal('Error', 'Failed to delete transcription: ' + (error.message || error));
+            }
+        }
+
+        // Event delegation for dynamically created buttons
+        if (transcriptionsList) {
+            transcriptionsList.addEventListener('click', (e) => {
+                if (e.target.closest('.view-transcription-btn')) {
+                    const btn = e.target.closest('.view-transcription-btn');
+                    const id = btn.getAttribute('data-id');
+                    const transcription = currentTranscriptions.find(t => t.id === id);
+                    if (transcription) {
+                        showTranscriptionModal(transcription);
+                    }
+                } else if (e.target.closest('.delete-transcription-btn')) {
+                    const btn = e.target.closest('.delete-transcription-btn');
+                    const id = btn.getAttribute('data-id');
+                    deleteTranscription(id);
+                }
+            });
+        }
+
+        if (refreshButton) {
+            refreshButton.addEventListener('click', loadTranscriptions);
+        }
+
+        // Load transcriptions when switching to the Previous view
+        sidebarLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                const targetViewId = link.getAttribute('href').substring(1);
+                if (targetViewId === 'previous') {
+                    loadTranscriptions();
+                }
+            });
+        });
+
+        // Draggable area for Electron frameless window (conceptual)
+        const draggableArea = document.querySelector('.draggable-area');
+        if (draggableArea) {
+            // In Electron, set -webkit-app-region: drag on this element in CSS.
+        }
+
+    </script>
+</body>
+</html>
